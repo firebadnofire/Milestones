@@ -38,6 +38,22 @@ android {
     buildFeatures {
         viewBinding = true
     }
+
+    sourceSets {
+        getByName("main") {
+            res.srcDir(layout.buildDirectory.dir("generated/res/appicon"))
+        }
+    }
+}
+
+val appIconResDir = layout.buildDirectory.dir("generated/res/appicon")
+val generateAppIcon by tasks.registering(Copy::class) {
+    from(rootProject.file("appicon.png"))
+    into(appIconResDir.map { it.dir("drawable") })
+}
+
+tasks.named("preBuild") {
+    dependsOn(generateAppIcon)
 }
 
 dependencies {
