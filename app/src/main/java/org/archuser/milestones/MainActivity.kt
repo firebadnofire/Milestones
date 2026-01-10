@@ -114,13 +114,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun persistMilestones() {
-        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit {
             putString(PREFS_KEY, MilestoneStorage.encode(milestones))
         }
     }
 
     private fun loadMilestones() {
-        val stored = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val stored = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
             .getString(PREFS_KEY, null)
             ?: return
         milestones.clear()
