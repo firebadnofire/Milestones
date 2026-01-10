@@ -3,7 +3,9 @@ package org.archuser.milestones
 import android.app.DatePickerDialog
 import android.content.Context
 import android.os.Bundle
+import android.view.View
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.edit
 import androidx.recyclerview.widget.LinearLayoutManager
 import org.archuser.milestones.databinding.ActivityMainBinding
 import java.text.SimpleDateFormat
@@ -108,18 +110,13 @@ class MainActivity : AppCompatActivity() {
     private fun updateMilestoneList() {
         val sorted = milestones.sortedByDescending { it.startDateMillis }
         adapter.submitList(sorted)
-        binding.emptyStateText.visibility = if (sorted.isEmpty()) {
-            android.view.View.VISIBLE
-        } else {
-            android.view.View.GONE
-        }
+        binding.emptyStateText.visibility = if (sorted.isEmpty()) View.VISIBLE else View.GONE
     }
 
     private fun persistMilestones() {
-        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putString(PREFS_KEY, MilestoneStorage.encode(milestones))
-            .apply()
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putString(PREFS_KEY, MilestoneStorage.encode(milestones))
+        }
     }
 
     private fun loadMilestones() {
@@ -130,9 +127,9 @@ class MainActivity : AppCompatActivity() {
         milestones.addAll(MilestoneStorage.decode(stored))
     }
 
-    private fun normalizeToMidnight(timeInMillis: Long): Long {
+    private fun normalizeToMidnight(timestampMillis: Long): Long {
         val calendar = Calendar.getInstance().apply {
-            timeInMillis = timeInMillis
+            timeInMillis = timestampMillis
             set(Calendar.HOUR_OF_DAY, 0)
             set(Calendar.MINUTE, 0)
             set(Calendar.SECOND, 0)
