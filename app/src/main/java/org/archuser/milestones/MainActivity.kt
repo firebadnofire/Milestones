@@ -1,20 +1,24 @@
 package org.archuser.milestones
 
+import android.app.DatePickerDialog
 import android.os.Bundle
-import com.google.android.material.snackbar.Snackbar
+import android.view.View
 import androidx.appcompat.app.AppCompatActivity
-import androidx.navigation.findNavController
-import androidx.navigation.ui.AppBarConfiguration
-import androidx.navigation.ui.navigateUp
-import androidx.navigation.ui.setupActionBarWithNavController
-import android.view.Menu
-import android.view.MenuItem
+import androidx.appcompat.app.AlertDialog
+import androidx.core.content.edit
+import androidx.recyclerview.widget.LinearLayoutManager
 import org.archuser.milestones.databinding.ActivityMainBinding
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var appBarConfiguration: AppBarConfiguration
     private lateinit var binding: ActivityMainBinding
+    private lateinit var adapter: MilestoneAdapter
+    private val milestones = mutableListOf<Milestone>()
+    private val dateFormatter = SimpleDateFormat("MMM d, yyyy", Locale.getDefault())
+    private var selectedDateMillis: Long? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -24,36 +28,149 @@ class MainActivity : AppCompatActivity() {
 
         setSupportActionBar(binding.toolbar)
 
-        val navController = findNavController(R.id.nav_host_fragment_content_main)
-        appBarConfiguration = AppBarConfiguration(navController.graph)
-        setupActionBarWithNavController(navController, appBarConfiguration)
+        adapter = MilestoneAdapter(
+            dateFormatter = dateFormatter,
+            onRemove = { milestone ->
+                confirmRemove(milestone)
+            },
+            onReset = { milestone ->
+                confirmReset(milestone)
+            }
+        )
 
-        binding.fab.setOnClickListener { view ->
-            Snackbar.make(view, "Replace with your own action", Snackbar.LENGTH_LONG)
-                .setAction("Action", null)
-                .setAnchorView(R.id.fab).show()
+        binding.milestoneList.layoutManager = LinearLayoutManager(this)
+        binding.milestoneList.adapter = adapter
+        binding.milestoneList.isNestedScrollingEnabled = false
+
+        binding.dateInputEditText.setOnClickListener { showDatePicker() }
+        binding.addMilestoneButton.setOnClickListener { addMilestone() }
+
+        loadMilestones()
+        updateMilestoneList()
+    }
+
+    private fun showDatePicker() {
+        val calendar = Calendar.getInstance()
+        selectedDateMillis?.let { calendar.timeInMillis = it }
+
+        val datePickerDialog = DatePickerDialog(
+            this,
+            { _, year, month, dayOfMonth ->
+                val chosenCalendar = Calendar.getInstance().apply {
+                    set(Calendar.YEAR, year)
+                    set(Calendar.MONTH, month)
+                    set(Calendar.DAY_OF_MONTH, dayOfMonth)
+                }
+                selectedDateMillis = normalizeToMidnight(chosenCalendar.timeInMillis)
+                binding.dateInputLayout.error = null
+                binding.dateInputEditText.setText(dateFormatter.format(chosenCalendar.time))
+            },
+            calendar.get(Calendar.YEAR),
+            calendar.get(Calendar.MONTH),
+            calendar.get(Calendar.DAY_OF_MONTH)
+        )
+        datePickerDialog.show()
+    }
+
+    private fun addMilestone() {
+        val name = binding.nameInputEditText.text?.toString()?.trim().orEmpty()
+
+        binding.nameInputLayout.error = null
+        binding.dateInputLayout.error = null
+
+        var hasError = false
+        if (name.isBlank()) {
+            binding.nameInputLayout.error = getString(R.string.error_name_required)
+            hasError = true
+        }
+
+        val dateMillis = selectedDateMillis
+        if (dateMillis == null) {
+            binding.dateInputLayout.error = getString(R.string.error_date_required)
+            hasError = true
+        }
+
+        if (hasError) return
+
+        milestones.add(
+            Milestone(
+                id = System.currentTimeMillis(),
+                name = name,
+                startDateMillis = dateMillis!!
+            )
+        )
+
+        binding.nameInputEditText.setText("")
+        binding.dateInputEditText.setText("")
+        selectedDateMillis = null
+
+        persistMilestones()
+        updateMilestoneList()
+    }
+
+    private fun updateMilestoneList() {
+        val sorted = milestones.sortedByDescending { it.startDateMillis }
+        adapter.submitList(sorted)
+        binding.emptyStateText.visibility = if (sorted.isEmpty()) View.VISIBLE else View.GONE
+    }
+
+    private fun persistMilestones() {
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit {
+            putString(PREFS_KEY, MilestoneStorage.encode(milestones))
         }
     }
 
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        // Inflate the menu; this adds items to the action bar if it is present.
-        menuInflater.inflate(R.menu.menu_main, menu)
-        return true
+    private fun loadMilestones() {
+        val stored = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .getString(PREFS_KEY, null)
+            ?: return
+        milestones.clear()
+        milestones.addAll(MilestoneStorage.decode(stored))
     }
 
-    override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        // Handle action bar item clicks here. The action bar will
-        // automatically handle clicks on the Home/Up button, so long
-        // as you specify a parent activity in AndroidManifest.xml.
-        return when (item.itemId) {
-            R.id.action_settings -> true
-            else -> super.onOptionsItemSelected(item)
+    private fun normalizeToMidnight(timestampMillis: Long): Long {
+        val calendar = Calendar.getInstance().apply {
+            timeInMillis = timestampMillis
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
         }
+        return calendar.timeInMillis
     }
 
-    override fun onSupportNavigateUp(): Boolean {
-        val navController = findNavController(R.id.nav_host_fragment_content_main)
-        return navController.navigateUp(appBarConfiguration)
-                || super.onSupportNavigateUp()
+    private fun confirmRemove(milestone: Milestone) {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.confirm_remove_title)
+            .setMessage(getString(R.string.confirm_remove_message, milestone.name))
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.remove) { _, _ ->
+                milestones.removeAll { it.id == milestone.id }
+                persistMilestones()
+                updateMilestoneList()
+            }
+            .show()
+    }
+
+    private fun confirmReset(milestone: Milestone) {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.confirm_reset_title)
+            .setMessage(getString(R.string.confirm_reset_message, milestone.name))
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.reset) { _, _ ->
+                val today = normalizeToMidnight(System.currentTimeMillis())
+                val index = milestones.indexOfFirst { it.id == milestone.id }
+                if (index != -1) {
+                    milestones[index] = milestone.copy(startDateMillis = today)
+                }
+                persistMilestones()
+                updateMilestoneList()
+            }
+            .show()
+    }
+
+    companion object {
+        private const val PREFS_NAME = "milestones_prefs"
+        private const val PREFS_KEY = "milestone_entries"
     }
 }
