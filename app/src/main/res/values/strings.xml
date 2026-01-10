@@ -18,4 +18,13 @@
     <string name="milestone_date_label">Started on %1$s</string>
     <string name="milestone_days_since">%1$d days since</string>
     <string name="milestone_days_until">Starts in %1$d days</string>
+    <string name="menu_export">Export (JSON)</string>
+    <string name="menu_import">Import (JSON)</string>
+    <string name="menu_material_you">Material You</string>
+    <string name="drawer_open">Open navigation drawer</string>
+    <string name="drawer_close">Close navigation drawer</string>
+    <string name="export_success">Exported milestones.</string>
+    <string name="export_failed">Unable to export milestones.</string>
+    <string name="import_success">Imported milestones.</string>
+    <string name="import_failed">Unable to import milestones.</string>
 </resources>
