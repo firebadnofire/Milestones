@@ -1,16 +1,17 @@
 package org.archuser.milestones
 
 import android.app.DatePickerDialog
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.view.View
 import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.StringRes
 import androidx.appcompat.app.ActionBarDrawerToggle
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AlertDialog
-import androidx.core.content.edit
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.color.DynamicColors
 import com.google.android.material.materialswitch.MaterialSwitch
@@ -25,6 +26,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var adapter: MilestoneAdapter
     private val milestones = mutableListOf<Milestone>()
+    private val medicines = mutableListOf<Medicine>()
     private val dateFormatter = SimpleDateFormat("MMM d, yyyy", Locale.getDefault())
     private var selectedDateMillis: Long? = null
     private lateinit var exportLauncher: ActivityResultLauncher<String>
@@ -58,9 +60,11 @@ class MainActivity : AppCompatActivity() {
 
         binding.dateInputEditText.setOnClickListener { showDatePicker() }
         binding.addMilestoneButton.setOnClickListener { addMilestone() }
+    }
 
-        loadMilestones()
-        updateMilestoneList()
+    override fun onResume() {
+        super.onResume()
+        refreshAppState()
     }
 
     private fun showDatePicker() {
@@ -108,7 +112,7 @@ class MainActivity : AppCompatActivity() {
 
         milestones.add(
             Milestone(
-                id = System.currentTimeMillis(),
+                id = nextMilestoneId(),
                 name = name,
                 startDateMillis = dateMillis!!
             )
@@ -118,7 +122,7 @@ class MainActivity : AppCompatActivity() {
         binding.dateInputEditText.setText("")
         selectedDateMillis = null
 
-        persistMilestones()
+        persistAppState()
         updateMilestoneList()
     }
 
@@ -128,18 +132,31 @@ class MainActivity : AppCompatActivity() {
         binding.emptyStateText.visibility = if (sorted.isEmpty()) View.VISIBLE else View.GONE
     }
 
-    private fun persistMilestones() {
-        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit {
-            putString(PREFS_KEY, MilestoneStorage.encode(milestones))
-        }
+    private fun refreshAppState() {
+        runCatching { AppStatePreferences.load(this) }
+            .onSuccess { appState ->
+                milestones.clear()
+                milestones.addAll(appState.milestones)
+                medicines.clear()
+                medicines.addAll(appState.medicines)
+                updateMilestoneList()
+            }
+            .onFailure {
+                milestones.clear()
+                medicines.clear()
+                updateMilestoneList()
+                Toast.makeText(this, R.string.load_failed_invalid, Toast.LENGTH_LONG).show()
+            }
     }
 
-    private fun loadMilestones() {
-        val stored = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-            .getString(PREFS_KEY, null)
-            ?: return
-        milestones.clear()
-        milestones.addAll(MilestoneStorage.decode(stored))
+    private fun persistAppState() {
+        AppStatePreferences.save(
+            this,
+            AppState(
+                milestones = milestones.toList(),
+                medicines = medicines.toList()
+            )
+        )
     }
 
     private fun setupDrawer() {
@@ -156,6 +173,18 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupMenuActions() {
         val menu = binding.navigationView.menu
+        menu.findItem(R.id.action_milestones).setOnMenuItemClickListener {
+            binding.drawerLayout.closeDrawer(binding.navigationView)
+            true
+        }
+        menu.findItem(R.id.action_medicines).setOnMenuItemClickListener {
+            binding.drawerLayout.closeDrawer(binding.navigationView)
+            startActivity(
+                Intent(this, MedicinesActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+            )
+            true
+        }
         menu.findItem(R.id.action_export).setOnMenuItemClickListener {
             exportLauncher.launch("milestones.json")
             binding.drawerLayout.closeDrawer(binding.navigationView)
@@ -194,32 +223,45 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun exportToUri(uri: Uri) {
-        val payload = MilestoneStorage.encode(milestones)
-        try {
+        val payload = AppStateStorage.encode(
+            AppState(
+                milestones = milestones.toList(),
+                medicines = medicines.toList()
+            )
+        )
+        val exportResult = runCatching {
             contentResolver.openOutputStream(uri)?.use { output ->
                 output.write(payload.toByteArray())
-            }
-            Toast.makeText(this, R.string.export_success, Toast.LENGTH_SHORT).show()
-        } catch (error: IOException) {
-            Toast.makeText(this, R.string.export_failed, Toast.LENGTH_SHORT).show()
+            } ?: throw IOException("Unable to open export destination.")
         }
+        showToast(if (exportResult.isSuccess) R.string.export_success else R.string.export_failed)
     }
 
     private fun importFromUri(uri: Uri) {
-        try {
-            val payload = contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }.orEmpty()
-            if (payload.isBlank()) {
-                Toast.makeText(this, R.string.import_failed, Toast.LENGTH_SHORT).show()
-                return
+        runCatching {
+            val payload = contentResolver.openInputStream(uri)
+                ?.bufferedReader()
+                ?.use { it.readText() }
+                ?: throw IOException("Unable to open import source.")
+            require(payload.isNotBlank()) {
+                "Import file is empty."
             }
-            val imported = MilestoneStorage.decode(payload)
+            AppStateStorage.decode(payload)
+        }.onSuccess { importedState ->
             milestones.clear()
-            milestones.addAll(imported)
-            persistMilestones()
+            milestones.addAll(importedState.milestones)
+            medicines.clear()
+            medicines.addAll(importedState.medicines)
+            persistAppState()
             updateMilestoneList()
-            Toast.makeText(this, R.string.import_success, Toast.LENGTH_SHORT).show()
-        } catch (error: Exception) {
-            Toast.makeText(this, R.string.import_failed, Toast.LENGTH_SHORT).show()
+            showToast(R.string.import_success)
+        }.onFailure { error ->
+            val messageRes = if (error is IOException) {
+                R.string.import_failed_io
+            } else {
+                R.string.import_failed_invalid
+            }
+            showToast(messageRes)
         }
     }
 
@@ -230,25 +272,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun isMaterialYouEnabled(): Boolean {
-        return getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-            .getBoolean(PREFS_KEY_MATERIAL_YOU, false)
+        return AppStatePreferences.isMaterialYouEnabled(this)
     }
 
     private fun setMaterialYouEnabled(enabled: Boolean) {
-        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit {
-            putBoolean(PREFS_KEY_MATERIAL_YOU, enabled)
-        }
+        AppStatePreferences.setMaterialYouEnabled(this, enabled)
     }
 
     private fun normalizeToMidnight(timestampMillis: Long): Long {
-        val calendar = Calendar.getInstance().apply {
-            timeInMillis = timestampMillis
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        return calendar.timeInMillis
+        return LocalDay.fromTimestamp(timestampMillis).startOfDayMillis()
     }
 
     private fun confirmRemove(milestone: Milestone) {
@@ -258,7 +290,7 @@ class MainActivity : AppCompatActivity() {
             .setNegativeButton(R.string.cancel, null)
             .setPositiveButton(R.string.remove) { _, _ ->
                 milestones.removeAll { it.id == milestone.id }
-                persistMilestones()
+                persistAppState()
                 updateMilestoneList()
             }
             .show()
@@ -270,20 +302,26 @@ class MainActivity : AppCompatActivity() {
             .setMessage(getString(R.string.confirm_reset_message, milestone.name))
             .setNegativeButton(R.string.cancel, null)
             .setPositiveButton(R.string.reset) { _, _ ->
-                val today = normalizeToMidnight(System.currentTimeMillis())
+                val today = LocalDay.today()
                 val index = milestones.indexOfFirst { it.id == milestone.id }
                 if (index != -1) {
-                    milestones[index] = milestone.copy(startDateMillis = today)
+                    milestones[index] = milestone.copy(
+                        startDateMillis = today.startOfDayMillis(),
+                        resetHistory = milestone.resetHistory + today.key()
+                    )
                 }
-                persistMilestones()
+                persistAppState()
                 updateMilestoneList()
             }
             .show()
     }
 
-    companion object {
-        private const val PREFS_NAME = "milestones_prefs"
-        private const val PREFS_KEY = "milestone_entries"
-        private const val PREFS_KEY_MATERIAL_YOU = "material_you_enabled"
+    private fun nextMilestoneId(): Long {
+        val nextExistingId = (milestones.maxOfOrNull(Milestone::id) ?: 0L) + 1L
+        return maxOf(System.currentTimeMillis(), nextExistingId)
+    }
+
+    private fun showToast(@StringRes messageRes: Int) {
+        Toast.makeText(this, messageRes, Toast.LENGTH_SHORT).show()
     }
 }

@@ -5,8 +5,6 @@ import android.view.ViewGroup
 import androidx.recyclerview.widget.RecyclerView
 import org.archuser.milestones.databinding.ItemMilestoneBinding
 import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.concurrent.TimeUnit
 
 class MilestoneAdapter(
     private val dateFormatter: SimpleDateFormat,
@@ -48,8 +46,13 @@ class MilestoneAdapter(
                     R.string.milestone_date_label,
                     dateFormatter.format(milestone.startDateMillis)
                 )
+            binding.resetCountLabel.text =
+                binding.root.context.getString(
+                    R.string.milestone_resets_last_7_days,
+                    MilestoneStats.recentResetCount(milestone)
+                )
 
-            val days = daysSince(milestone.startDateMillis)
+            val days = MilestoneStats.daysFromToday(milestone)
             if (days >= 0) {
                 binding.milestoneDays.text =
                     binding.root.context.getString(R.string.milestone_days_since, days)
@@ -60,24 +63,6 @@ class MilestoneAdapter(
 
             binding.removeButton.setOnClickListener { onRemove(milestone) }
             binding.resetButton.setOnClickListener { onReset(milestone) }
-        }
-
-        private fun daysSince(startDateMillis: Long): Long {
-            val today = Calendar.getInstance().apply {
-                set(Calendar.HOUR_OF_DAY, 0)
-                set(Calendar.MINUTE, 0)
-                set(Calendar.SECOND, 0)
-                set(Calendar.MILLISECOND, 0)
-            }
-            val startDay = Calendar.getInstance().apply {
-                timeInMillis = startDateMillis
-                set(Calendar.HOUR_OF_DAY, 0)
-                set(Calendar.MINUTE, 0)
-                set(Calendar.SECOND, 0)
-                set(Calendar.MILLISECOND, 0)
-            }
-            val diff = today.timeInMillis - startDay.timeInMillis
-            return TimeUnit.MILLISECONDS.toDays(diff)
         }
     }
 }

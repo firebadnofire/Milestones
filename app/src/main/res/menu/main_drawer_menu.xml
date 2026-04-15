@@ -3,6 +3,14 @@
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
     <item
+        android:id="@+id/action_milestones"
+        android:title="@string/menu_milestones" />
+
+    <item
+        android:id="@+id/action_medicines"
+        android:title="@string/menu_medicines" />
+
+    <item
         android:id="@+id/action_export"
         android:title="@string/menu_export" />
 
