@@ -237,7 +237,7 @@ jobs:
           api_url="https://api.github.com"
           upload_url="https://uploads.github.com"
           owner="firebadnofire"
-          repo="appname"
+          repo="Milestones"
           tag="${FORGEJO_REF_NAME:-${GITHUB_REF_NAME:?Missing tag ref name}}"
           token="${GH_KEY:?Missing GitHub token}"
           asset_path="dist/milestones-${tag}.apk"

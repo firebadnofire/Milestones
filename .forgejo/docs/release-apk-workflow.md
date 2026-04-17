@@ -116,10 +116,10 @@ The workflow validates all required secrets before it builds:
 | `KEY_PASSWORD` | Password for the Android signing key. |
 | `KEYSTORE_BASE64` | Base64-encoded Android keystore file. |
 | `KEYSTORE_PASSWORD` | Password for the Android keystore. |
-| `GH_KEY` | GitHub access token used to publish to `github.com/firebadnofire/appname`. |
+| `GH_KEY` | GitHub access token used to publish to `github.com/firebadnofire/Milestones`. |
 
 `GH_KEY` should have enough permission to create and edit releases and upload
-release assets for `firebadnofire/appname`. For a fine-grained GitHub
+release assets for `firebadnofire/Milestones`. For a fine-grained GitHub
 token, use repository `Contents: Read and write`.
 
 Secret scope matters. `GH_KEY` must be available to this repository's workflows.
@@ -214,7 +214,7 @@ run GitHub Actions.
 Target repository:
 
 ```text
-github.com/firebadnofire/appname
+github.com/firebadnofire/Milestones
 ```
 
 The step:
@@ -233,7 +233,7 @@ https://uploads.github.com/repos/{owner}/{repo}/releases/{release_id}/assets
 ```
 
 If GitHub release creation fails because the tag does not exist on GitHub, verify
-that the tag was pushed or mirrored to `firebadnofire/appname`. The workflow does
+that the tag was pushed or mirrored to `firebadnofire/Milestones`. The workflow does
 not pass Forgejo's commit SHA as `target_commitish`, because that SHA may not
 exist in GitHub. If the tag is missing on GitHub, GitHub creates it from the
 target repository's default branch when the release is created.
@@ -284,7 +284,7 @@ Edit these variables in `Publish GitHub release`:
 
 ```bash
 owner="firebadnofire"
-repo="appname"
+repo="Milestones"
 ```
 
 Make sure `GH_KEY` has permission for the new target repository.
