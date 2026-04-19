@@ -140,6 +140,7 @@ class MainActivity : AppCompatActivity() {
                 medicines.clear()
                 medicines.addAll(appState.medicines)
                 updateMilestoneList()
+                syncMedicineReminders()
             }
             .onFailure {
                 milestones.clear()
@@ -248,12 +249,15 @@ class MainActivity : AppCompatActivity() {
             }
             AppStateStorage.decode(payload)
         }.onSuccess { importedState ->
+            val previousMedicines = medicines.toList()
             milestones.clear()
             milestones.addAll(importedState.milestones)
             medicines.clear()
             medicines.addAll(importedState.medicines)
+            MedicineReminderScheduler.cancelMedicines(this, previousMedicines)
             persistAppState()
             updateMilestoneList()
+            syncMedicineReminders()
             showToast(R.string.import_success)
         }.onFailure { error ->
             val messageRes = if (error is IOException) {
@@ -277,6 +281,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun setMaterialYouEnabled(enabled: Boolean) {
         AppStatePreferences.setMaterialYouEnabled(this, enabled)
+    }
+
+    private fun syncMedicineReminders() {
+        if (medicines.isNotEmpty()) {
+            MedicineReminderScheduler.scheduleAll(this, medicines)
+        }
     }
 
     private fun normalizeToMidnight(timestampMillis: Long): Long {

@@ -47,4 +47,9 @@
     <string name="medicine_today_summary">Today: %1$d/%2$d doses taken</string>
     <string name="confirm_remove_medicine_title">Remove medicine?</string>
     <string name="confirm_remove_medicine_message">Remove “%1$s” and its dose history?</string>
+    <string name="medicine_reminder_channel_name">Medicine reminders</string>
+    <string name="medicine_reminder_channel_description">Dose time reminders for scheduled medicines.</string>
+    <string name="medicine_reminder_notification_title">%1$s dose due</string>
+    <string name="medicine_reminder_notification_text">Scheduled for %1$s.</string>
+    <string name="medicine_reminders_permission_denied">Medicine reminders need notification permission.</string>
 </resources>

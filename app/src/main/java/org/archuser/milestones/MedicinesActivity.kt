@@ -1,9 +1,12 @@
 package org.archuser.milestones
 
+import android.Manifest
 import android.app.AlertDialog
 import android.app.TimePickerDialog
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.widget.Toast
@@ -12,6 +15,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.StringRes
 import androidx.appcompat.app.ActionBarDrawerToggle
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.chip.Chip
 import com.google.android.material.color.DynamicColors
@@ -30,6 +34,7 @@ class MedicinesActivity : AppCompatActivity() {
     private val selectedScheduleTimes = mutableListOf<Int>()
     private lateinit var exportLauncher: ActivityResultLauncher<String>
     private lateinit var importLauncher: ActivityResultLauncher<Array<String>>
+    private lateinit var notificationPermissionLauncher: ActivityResultLauncher<String>
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -41,6 +46,7 @@ class MedicinesActivity : AppCompatActivity() {
         setSupportActionBar(binding.toolbar)
         setupDrawer()
         setupMenuActions()
+        setupReminderPermissionLauncher()
         setupImportExportLaunchers()
 
         adapter = MedicineAdapter(
@@ -141,6 +147,7 @@ class MedicinesActivity : AppCompatActivity() {
                 medicines.clear()
                 medicines.addAll(appState.medicines)
                 updateMedicineList()
+                syncMedicineReminders()
             }
             .onFailure {
                 milestones.clear()
@@ -219,19 +226,19 @@ class MedicinesActivity : AppCompatActivity() {
         }
         if (hasError) return
 
-        medicines.add(
-            Medicine(
-                id = nextMedicineId(),
-                name = name,
-                scheduledTimes = selectedScheduleTimes.toList()
-            )
+        val medicine = Medicine(
+            id = nextMedicineId(),
+            name = name,
+            scheduledTimes = selectedScheduleTimes.toList()
         )
+        medicines.add(medicine)
 
         binding.medicineNameInputEditText.setText("")
         selectedScheduleTimes.clear()
         renderSelectedScheduleTimes()
         persistAppState()
         updateMedicineList()
+        syncMedicineReminders()
     }
 
     private fun updateMedicineList() {
@@ -265,6 +272,7 @@ class MedicinesActivity : AppCompatActivity() {
             .setNegativeButton(R.string.cancel, null)
             .setPositiveButton(R.string.remove) { _, _ ->
                 medicines.removeAll { it.id == medicine.id }
+                MedicineReminderScheduler.cancelMedicine(this, medicine)
                 persistAppState()
                 updateMedicineList()
             }
@@ -297,12 +305,15 @@ class MedicinesActivity : AppCompatActivity() {
             }
             AppStateStorage.decode(payload)
         }.onSuccess { importedState ->
+            val previousMedicines = medicines.toList()
             milestones.clear()
             milestones.addAll(importedState.milestones)
             medicines.clear()
             medicines.addAll(importedState.medicines)
+            MedicineReminderScheduler.cancelMedicines(this, previousMedicines)
             persistAppState()
             updateMedicineList()
+            syncMedicineReminders()
             showToast(R.string.import_success)
         }.onFailure { error ->
             val messageRes = if (error is IOException) {
@@ -326,6 +337,40 @@ class MedicinesActivity : AppCompatActivity() {
 
     private fun setMaterialYouEnabled(enabled: Boolean) {
         AppStatePreferences.setMaterialYouEnabled(this, enabled)
+    }
+
+    private fun setupReminderPermissionLauncher() {
+        notificationPermissionLauncher = registerForActivityResult(
+            ActivityResultContracts.RequestPermission()
+        ) { isGranted ->
+            if (isGranted) {
+                MedicineReminderScheduler.scheduleAll(this, medicines)
+            } else {
+                showToast(R.string.medicine_reminders_permission_denied)
+            }
+        }
+    }
+
+    private fun syncMedicineReminders() {
+        if (medicines.isEmpty()) return
+
+        MedicineReminderScheduler.scheduleAll(this, medicines)
+        requestNotificationPermissionIfNeeded()
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        if (AppStatePreferences.hasRequestedNotificationPermission(this)) return
+
+        AppStatePreferences.setNotificationPermissionRequested(this, true)
+        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
     private fun showScheduleError(@StringRes messageRes: Int) {

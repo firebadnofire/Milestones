@@ -7,6 +7,7 @@ object AppStatePreferences {
     private const val PREFS_NAME = "milestones_prefs"
     private const val PREFS_KEY_STATE = "milestone_entries"
     private const val PREFS_KEY_MATERIAL_YOU = "material_you_enabled"
+    private const val PREFS_KEY_NOTIFICATION_PERMISSION_REQUESTED = "notification_permission_requested"
 
     fun load(context: Context): AppState {
         val payload = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -29,6 +30,17 @@ object AppStatePreferences {
     fun setMaterialYouEnabled(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
             putBoolean(PREFS_KEY_MATERIAL_YOU, enabled)
+        }
+    }
+
+    fun hasRequestedNotificationPermission(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(PREFS_KEY_NOTIFICATION_PERMISSION_REQUESTED, false)
+    }
+
+    fun setNotificationPermissionRequested(context: Context, requested: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putBoolean(PREFS_KEY_NOTIFICATION_PERMISSION_REQUESTED, requested)
         }
     }
 }
