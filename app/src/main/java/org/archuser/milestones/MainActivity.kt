@@ -4,7 +4,10 @@ import android.app.DatePickerDialog
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.provider.OpenableColumns
 import android.view.View
+import android.widget.ImageButton
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
@@ -31,6 +34,7 @@ class MainActivity : AppCompatActivity() {
     private var selectedDateMillis: Long? = null
     private lateinit var exportLauncher: ActivityResultLauncher<String>
     private lateinit var importLauncher: ActivityResultLauncher<Array<String>>
+    private lateinit var customNotificationSoundLauncher: ActivityResultLauncher<Array<String>>
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,6 +47,7 @@ class MainActivity : AppCompatActivity() {
         setupDrawer()
         setupMenuActions()
         setupImportExportLaunchers()
+        setupCustomNotificationSoundLauncher()
 
         adapter = MilestoneAdapter(
             dateFormatter = dateFormatter,
@@ -208,6 +213,30 @@ class MainActivity : AppCompatActivity() {
             switchView?.isChecked = switchView?.isChecked?.not() ?: false
             true
         }
+
+        val customNotificationSoundItem = menu.findItem(R.id.action_custom_notification_sound)
+        val customNotificationSoundSwitch = customNotificationSoundItem.actionView
+            ?.findViewById<MaterialSwitch>(R.id.notification_sound_switch)
+        customNotificationSoundSwitch?.isChecked = isCustomNotificationSoundEnabled()
+        customNotificationSoundSwitch?.setOnCheckedChangeListener { _, isChecked ->
+            setCustomNotificationSoundEnabled(isChecked)
+            updateCustomNotificationSoundMenu()
+            if (isChecked && getCustomNotificationSoundUri() == null) {
+                showToast(R.string.custom_notification_sound_pick_prompt)
+            }
+        }
+        customNotificationSoundItem.setOnMenuItemClickListener {
+            customNotificationSoundSwitch?.isChecked = customNotificationSoundSwitch?.isChecked?.not() ?: false
+            true
+        }
+
+        menu.findItem(R.id.action_pick_notification_sound).setOnMenuItemClickListener {
+            customNotificationSoundLauncher.launch(arrayOf("audio/*"))
+            binding.drawerLayout.closeDrawer(binding.navigationView)
+            true
+        }
+
+        updateCustomNotificationSoundMenu()
     }
 
     private fun setupImportExportLaunchers() {
@@ -219,6 +248,14 @@ class MainActivity : AppCompatActivity() {
         importLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri != null) {
                 importFromUri(uri)
+            }
+        }
+    }
+
+    private fun setupCustomNotificationSoundLauncher() {
+        customNotificationSoundLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) {
+                importCustomNotificationSound(uri)
             }
         }
     }
@@ -281,6 +318,149 @@ class MainActivity : AppCompatActivity() {
 
     private fun setMaterialYouEnabled(enabled: Boolean) {
         AppStatePreferences.setMaterialYouEnabled(this, enabled)
+    }
+
+    private fun isCustomNotificationSoundEnabled(): Boolean {
+        return AppStatePreferences.isCustomNotificationSoundEnabled(this)
+    }
+
+    private fun setCustomNotificationSoundEnabled(enabled: Boolean) {
+        AppStatePreferences.setCustomNotificationSoundEnabled(this, enabled)
+    }
+
+    private fun getCustomNotificationSoundUri(): String? {
+        return AppStatePreferences.getCustomNotificationSoundUri(this)
+    }
+
+    private fun updateCustomNotificationSoundMenu() {
+        val menu = binding.navigationView.menu
+        val pickerItem = menu.findItem(R.id.action_pick_notification_sound)
+        pickerItem.isVisible = isCustomNotificationSoundEnabled()
+        pickerItem.actionView?.let { actionView ->
+            val fileNameView = actionView.findViewById<TextView>(R.id.notification_sound_file_name)
+            val removeButton = actionView.findViewById<ImageButton>(R.id.remove_notification_sound_button)
+            val displayName = getSelectedNotificationSoundDisplayName()
+
+            actionView.setOnClickListener {
+                customNotificationSoundLauncher.launch(arrayOf("audio/*"))
+                binding.drawerLayout.closeDrawer(binding.navigationView)
+            }
+
+            fileNameView.text = displayName ?: getString(R.string.menu_notification_sound_none)
+            fileNameView.isSelected = !displayName.isNullOrBlank()
+
+            removeButton.visibility = if (displayName.isNullOrBlank()) View.GONE else View.VISIBLE
+            removeButton.setOnClickListener {
+                confirmRemoveCustomNotificationSound(displayName)
+            }
+        }
+    }
+
+    private fun importCustomNotificationSound(uri: Uri) {
+        runCatching {
+            validateCustomNotificationSound(uri)
+            contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+            replaceCustomNotificationSoundUri(uri.toString())
+        }.onSuccess {
+            updateCustomNotificationSoundMenu()
+            showToast(R.string.custom_notification_sound_saved)
+        }.onFailure { error ->
+            showToast(
+                if (error is IOException || error is IllegalArgumentException) {
+                    R.string.custom_notification_sound_invalid
+                } else {
+                    R.string.custom_notification_sound_failed
+                }
+            )
+        }
+    }
+
+    private fun confirmRemoveCustomNotificationSound(displayName: String?) {
+        val resolvedDisplayName = displayName ?: getString(R.string.menu_notification_sound_none)
+        AlertDialog.Builder(this)
+            .setTitle(R.string.confirm_remove_custom_notification_sound_title)
+            .setMessage(
+                getString(
+                    R.string.confirm_remove_custom_notification_sound_message,
+                    resolvedDisplayName
+                )
+            )
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.remove) { _, _ ->
+                removeCustomNotificationSound()
+            }
+            .show()
+    }
+
+    private fun removeCustomNotificationSound() {
+        runCatching {
+            releasePersistedCustomNotificationSoundUri()
+            AppStatePreferences.setCustomNotificationSoundUri(this, null)
+        }.onSuccess {
+            updateCustomNotificationSoundMenu()
+            showToast(R.string.custom_notification_sound_removed)
+        }.onFailure {
+            showToast(R.string.custom_notification_sound_remove_failed)
+        }
+    }
+
+    private fun replaceCustomNotificationSoundUri(newUri: String) {
+        val currentUri = getCustomNotificationSoundUri()
+        if (currentUri == newUri) {
+            AppStatePreferences.setCustomNotificationSoundUri(this, newUri)
+            return
+        }
+
+        releasePersistedUri(currentUri)
+        AppStatePreferences.setCustomNotificationSoundUri(this, newUri)
+    }
+
+    private fun releasePersistedCustomNotificationSoundUri() {
+        releasePersistedUri(getCustomNotificationSoundUri())
+    }
+
+    private fun releasePersistedUri(uriString: String?) {
+        if (uriString.isNullOrBlank()) return
+
+        runCatching {
+            contentResolver.releasePersistableUriPermission(
+                Uri.parse(uriString),
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        }
+    }
+
+    private fun getSelectedNotificationSoundDisplayName(): String? {
+        return getCustomNotificationSoundUri()
+            ?.let(Uri::parse)
+            ?.let(::resolveDocumentDisplayName)
+    }
+
+    private fun validateCustomNotificationSound(uri: Uri) {
+        val mimeType = contentResolver.getType(uri)
+        require(mimeType?.startsWith("audio/") == true) {
+            "Selected document must be an audio file."
+        }
+        contentResolver.openAssetFileDescriptor(uri, "r")?.use { asset ->
+            require(asset.length != 0L) {
+                "Selected audio file is empty."
+            }
+        } ?: throw IOException("Unable to open selected audio file.")
+    }
+
+    private fun resolveDocumentDisplayName(uri: Uri): String? {
+        val projection = arrayOf(OpenableColumns.DISPLAY_NAME)
+        return contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+            val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (nameIndex == -1 || !cursor.moveToFirst()) {
+                null
+            } else {
+                cursor.getString(nameIndex)
+            }
+        }
     }
 
     private fun syncMedicineReminders() {

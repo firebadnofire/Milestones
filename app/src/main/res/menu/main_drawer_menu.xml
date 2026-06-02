@@ -22,4 +22,15 @@
         android:id="@+id/action_material_you"
         android:title="@string/menu_material_you"
         app:actionLayout="@layout/menu_material_you_item" />
+
+    <item
+        android:id="@+id/action_custom_notification_sound"
+        android:title="@string/menu_custom_notification_sound"
+        app:actionLayout="@layout/menu_notification_sound_item" />
+
+    <item
+        android:id="@+id/action_pick_notification_sound"
+        android:title="@string/menu_pick_notification_sound"
+        android:visible="false"
+        app:actionLayout="@layout/menu_notification_sound_picker_item" />
 </menu>

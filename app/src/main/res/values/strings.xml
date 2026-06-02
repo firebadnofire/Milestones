@@ -24,6 +24,14 @@
     <string name="menu_export">Export (JSON)</string>
     <string name="menu_import">Import (JSON)</string>
     <string name="menu_material_you">Material You</string>
+    <string name="menu_custom_notification_sound">Custom notification sound</string>
+    <string name="menu_pick_notification_sound">Choose notification sound</string>
+    <string name="menu_notification_sound_none">No sound selected</string>
+    <string name="remove_custom_notification_sound">Remove custom notification sound</string>
+    <string name="confirm_remove_custom_notification_sound_title">Remove custom sound?</string>
+    <string name="confirm_remove_custom_notification_sound_message">Remove “%1$s” and return reminder notifications to the default sound?</string>
+    <string name="custom_notification_sound_removed">Custom notification sound removed.</string>
+    <string name="custom_notification_sound_remove_failed">Unable to remove the selected sound.</string>
     <string name="drawer_open">Open navigation drawer</string>
     <string name="drawer_close">Close navigation drawer</string>
     <string name="export_success">Exported milestones.</string>
@@ -52,4 +60,8 @@
     <string name="medicine_reminder_notification_title">%1$s dose due</string>
     <string name="medicine_reminder_notification_text">Scheduled for %1$s.</string>
     <string name="medicine_reminders_permission_denied">Medicine reminders need notification permission.</string>
+    <string name="custom_notification_sound_pick_prompt">Choose an audio file for reminder notifications.</string>
+    <string name="custom_notification_sound_saved">Custom notification sound saved.</string>
+    <string name="custom_notification_sound_invalid">Choose a valid audio file.</string>
+    <string name="custom_notification_sound_failed">Unable to save the selected sound.</string>
 </resources>

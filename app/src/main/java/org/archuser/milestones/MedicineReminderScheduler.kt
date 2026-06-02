@@ -9,6 +9,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
 import android.net.Uri
 import android.os.Build
 import android.util.Log
@@ -25,7 +26,8 @@ object MedicineReminderScheduler {
     const val EXTRA_DUE_DAY = "due_day"
 
     private const val TAG = "MedicineReminders"
-    private const val CHANNEL_ID = "medicine_reminders"
+    private const val DEFAULT_CHANNEL_ID = "medicine_reminders_default"
+    private const val CUSTOM_CHANNEL_ID_PREFIX = "medicine_reminders_custom_"
     private const val MINUTES_PER_HOUR = 60
     private const val MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR
     private const val CONTENT_INTENT_REQUEST_CODE = 20_000
@@ -35,7 +37,7 @@ object MedicineReminderScheduler {
         medicines: List<Medicine>,
         nowMillis: Long = System.currentTimeMillis()
     ) {
-        createNotificationChannel(context)
+        ensureNotificationChannels(context)
         medicines.forEach { medicine ->
             scheduleMedicine(context, medicine, nowMillis)
         }
@@ -108,14 +110,15 @@ object MedicineReminderScheduler {
         medicine: Medicine,
         scheduledMinutes: Int
     ) {
-        createNotificationChannel(context)
         if (!canPostNotifications(context)) {
             Log.i(TAG, "Medicine reminder notification skipped because notification permission is unavailable.")
             return
         }
 
+        val customSoundUri = resolveCustomNotificationSoundUri(context)
+        val channelId = ensureNotificationChannels(context, customSoundUri)
         val scheduledTime = formatScheduledTime(context, scheduledMinutes)
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+        val notificationBuilder = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(R.drawable.ic_medicine_notification)
             .setContentTitle(
                 context.getString(R.string.medicine_reminder_notification_title, medicine.name)
@@ -128,7 +131,12 @@ object MedicineReminderScheduler {
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setAutoCancel(true)
             .setContentIntent(openMedicinesPendingIntent(context))
-            .build()
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O && customSoundUri != null) {
+            notificationBuilder.setSound(customSoundUri)
+        }
+
+        val notification = notificationBuilder.build()
 
         notify(context, reminderRequestCode(medicine.id, scheduledMinutes), notification)
     }
@@ -162,23 +170,80 @@ object MedicineReminderScheduler {
         ) == PackageManager.PERMISSION_GRANTED
     }
 
-    private fun createNotificationChannel(context: Context) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+    private fun ensureNotificationChannels(
+        context: Context,
+        customSoundUri: Uri? = resolveCustomNotificationSoundUri(context)
+    ): String {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return DEFAULT_CHANNEL_ID
+        }
 
         val notificationManager = context.getSystemService(NotificationManager::class.java)
         if (notificationManager == null) {
             Log.e(TAG, "Unable to create medicine reminder channel because NotificationManager is unavailable.")
-            return
+            return DEFAULT_CHANNEL_ID
         }
 
-        val channel = NotificationChannel(
-            CHANNEL_ID,
+        val defaultChannel = NotificationChannel(
+            DEFAULT_CHANNEL_ID,
             context.getString(R.string.medicine_reminder_channel_name),
             NotificationManager.IMPORTANCE_DEFAULT
         ).apply {
             description = context.getString(R.string.medicine_reminder_channel_description)
         }
-        notificationManager.createNotificationChannel(channel)
+        notificationManager.createNotificationChannel(defaultChannel)
+
+        if (customSoundUri == null) {
+            return DEFAULT_CHANNEL_ID
+        }
+
+        val customChannelId = customChannelId(customSoundUri)
+        val customChannel = NotificationChannel(
+            customChannelId,
+            context.getString(R.string.medicine_reminder_channel_name),
+            NotificationManager.IMPORTANCE_DEFAULT
+        ).apply {
+            description = context.getString(R.string.medicine_reminder_channel_description)
+            setSound(customSoundUri, notificationAudioAttributes())
+        }
+        notificationManager.createNotificationChannel(customChannel)
+        return customChannelId
+    }
+
+    private fun resolveCustomNotificationSoundUri(context: Context): Uri? {
+        if (!AppStatePreferences.isCustomNotificationSoundEnabled(context)) {
+            return null
+        }
+
+        val storedUri = AppStatePreferences.getCustomNotificationSoundUri(context)
+            ?.let(Uri::parse)
+            ?: return null
+
+        return runCatching {
+            val mimeType = context.contentResolver.getType(storedUri)
+            require(mimeType?.startsWith("audio/") == true) {
+                "Stored custom notification sound is not audio."
+            }
+            context.contentResolver.openAssetFileDescriptor(storedUri, "r")?.use { asset ->
+                require(asset.length != 0L) {
+                    "Stored custom notification sound is empty."
+                }
+            } ?: error("Unable to open stored custom notification sound.")
+            storedUri
+        }.onFailure { error ->
+            Log.e(TAG, "Falling back to the system notification sound because the custom sound is unavailable.", error)
+        }.getOrNull()
+    }
+
+    private fun customChannelId(soundUri: Uri): String {
+        return CUSTOM_CHANNEL_ID_PREFIX + soundUri.toString().hashCode().toUInt().toString(16)
+    }
+
+    private fun notificationAudioAttributes(): AudioAttributes {
+        return AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build()
     }
 
     private fun dosePendingIntent(
