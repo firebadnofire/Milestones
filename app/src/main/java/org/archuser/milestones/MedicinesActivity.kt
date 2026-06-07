@@ -2,12 +2,14 @@ package org.archuser.milestones
 
 import android.Manifest
 import android.app.AlertDialog
+import android.app.NotificationManager
 import android.app.TimePickerDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.provider.OpenableColumns
 import android.view.View
 import android.widget.ImageButton
@@ -35,10 +37,15 @@ class MedicinesActivity : AppCompatActivity() {
     private val milestones = mutableListOf<Milestone>()
     private val medicines = mutableListOf<Medicine>()
     private val selectedScheduleTimes = mutableListOf<Int>()
+    private val selectedWeekdays = Medicine.ALL_SCHEDULED_WEEKDAYS.toMutableSet()
     private lateinit var exportLauncher: ActivityResultLauncher<String>
     private lateinit var importLauncher: ActivityResultLauncher<Array<String>>
+    private lateinit var exactAlarmSettingsLauncher: ActivityResultLauncher<Intent>
+    private lateinit var fullScreenIntentSettingsLauncher: ActivityResultLauncher<Intent>
     private lateinit var notificationPermissionLauncher: ActivityResultLauncher<String>
     private lateinit var customNotificationSoundLauncher: ActivityResultLauncher<Array<String>>
+    private var exactAlarmPromptShownThisSession = false
+    private var fullScreenIntentPromptShownThisSession = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -50,9 +57,12 @@ class MedicinesActivity : AppCompatActivity() {
         setSupportActionBar(binding.toolbar)
         setupDrawer()
         setupMenuActions()
-        setupReminderPermissionLauncher()
         setupImportExportLaunchers()
+        setupExactAlarmSettingsLauncher()
+        setupFullScreenIntentSettingsLauncher()
+        setupNotificationPermissionLauncher()
         setupCustomNotificationSoundLauncher()
+        handleAlarmFullScreenIntent(intent)
 
         adapter = MedicineAdapter(
             onDoseChecked = { medicine, doseIndex, isChecked ->
@@ -63,6 +73,9 @@ class MedicinesActivity : AppCompatActivity() {
             },
             formatScheduledTime = { minutesAfterMidnight ->
                 formatScheduledTime(minutesAfterMidnight)
+            },
+            formatScheduledWeekdays = { scheduledWeekdays ->
+                formatScheduledWeekdays(scheduledWeekdays)
             }
         )
 
@@ -72,12 +85,19 @@ class MedicinesActivity : AppCompatActivity() {
 
         binding.addDoseTimeButton.setOnClickListener { showTimePicker() }
         binding.addMedicineButton.setOnClickListener { addMedicine() }
+        renderSelectedWeekdays()
         renderSelectedScheduleTimes()
     }
 
     override fun onResume() {
         super.onResume()
         refreshAppState()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleAlarmFullScreenIntent(intent)
     }
 
     private fun setupDrawer() {
@@ -168,6 +188,45 @@ class MedicinesActivity : AppCompatActivity() {
         }
     }
 
+    private fun setupExactAlarmSettingsLauncher() {
+        exactAlarmSettingsLauncher = registerForActivityResult(
+            ActivityResultContracts.StartActivityForResult()
+        ) {
+            if (MedicineReminderScheduler.canScheduleExactAlarms(this)) {
+                exactAlarmPromptShownThisSession = false
+                MedicineReminderScheduler.scheduleAll(this, medicines)
+                requestNotificationPermissionIfNeeded()
+            } else {
+                showToast(R.string.medicine_exact_alarm_permission_denied)
+            }
+        }
+    }
+
+    private fun setupNotificationPermissionLauncher() {
+        notificationPermissionLauncher = registerForActivityResult(
+            ActivityResultContracts.RequestPermission()
+        ) { isGranted ->
+            if (isGranted) {
+                requestFullScreenIntentPermissionIfNeeded()
+            } else {
+                showToast(R.string.medicine_reminders_permission_denied)
+            }
+        }
+    }
+
+    private fun setupFullScreenIntentSettingsLauncher() {
+        fullScreenIntentSettingsLauncher = registerForActivityResult(
+            ActivityResultContracts.StartActivityForResult()
+        ) {
+            if (canUseFullScreenIntent()) {
+                fullScreenIntentPromptShownThisSession = false
+                MedicineReminderScheduler.scheduleAll(this, medicines)
+            } else {
+                showToast(R.string.medicine_full_screen_intent_permission_denied)
+            }
+        }
+    }
+
     private fun setupCustomNotificationSoundLauncher() {
         customNotificationSoundLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri != null) {
@@ -246,6 +305,28 @@ class MedicinesActivity : AppCompatActivity() {
         }
     }
 
+    private fun renderSelectedWeekdays() {
+        binding.weekdayChipGroup.removeAllViews()
+        orderedWeekdays().forEach { dayOfWeek ->
+            val chip = Chip(this).apply {
+                text = weekdayDisplayName(dayOfWeek)
+                isCheckable = true
+                isChecked = dayOfWeek in selectedWeekdays
+                setOnCheckedChangeListener { _, isChecked ->
+                    if (isChecked) {
+                        selectedWeekdays.add(dayOfWeek)
+                    } else {
+                        selectedWeekdays.remove(dayOfWeek)
+                    }
+                    if (selectedWeekdays.isNotEmpty()) {
+                        clearScheduleError()
+                    }
+                }
+            }
+            binding.weekdayChipGroup.addView(chip)
+        }
+    }
+
     private fun addMedicine() {
         val name = binding.medicineNameInputEditText.text?.toString()?.trim().orEmpty()
 
@@ -257,6 +338,10 @@ class MedicinesActivity : AppCompatActivity() {
             binding.medicineNameInputLayout.error = getString(R.string.error_medicine_name_required)
             hasError = true
         }
+        if (selectedWeekdays.isEmpty()) {
+            showScheduleError(R.string.error_weekdays_required)
+            hasError = true
+        }
         if (selectedScheduleTimes.isEmpty()) {
             showScheduleError(R.string.error_schedule_required)
             hasError = true
@@ -266,12 +351,16 @@ class MedicinesActivity : AppCompatActivity() {
         val medicine = Medicine(
             id = nextMedicineId(),
             name = name,
-            scheduledTimes = selectedScheduleTimes.toList()
+            scheduledTimes = selectedScheduleTimes.toList(),
+            scheduledWeekdays = persistableScheduledWeekdays()
         )
         medicines.add(medicine)
 
         binding.medicineNameInputEditText.setText("")
         selectedScheduleTimes.clear()
+        selectedWeekdays.clear()
+        selectedWeekdays.addAll(Medicine.ALL_SCHEDULED_WEEKDAYS)
+        renderSelectedWeekdays()
         renderSelectedScheduleTimes()
         persistAppState()
         updateMedicineList()
@@ -298,6 +387,9 @@ class MedicinesActivity : AppCompatActivity() {
             scheduledDoseIndex = doseIndex,
             isTaken = isChecked
         )
+        if (isChecked) {
+            MedicineAlarmService.stop(this)
+        }
         persistAppState()
         updateMedicineList()
     }
@@ -519,38 +611,90 @@ class MedicinesActivity : AppCompatActivity() {
         }
     }
 
-    private fun setupReminderPermissionLauncher() {
-        notificationPermissionLauncher = registerForActivityResult(
-            ActivityResultContracts.RequestPermission()
-        ) { isGranted ->
-            if (isGranted) {
-                MedicineReminderScheduler.scheduleAll(this, medicines)
-            } else {
-                showToast(R.string.medicine_reminders_permission_denied)
-            }
-        }
-    }
-
     private fun syncMedicineReminders() {
         if (medicines.isEmpty()) return
-
+        if (!MedicineReminderScheduler.canScheduleExactAlarms(this)) {
+            promptForExactAlarmPermissionIfNeeded()
+            return
+        }
         MedicineReminderScheduler.scheduleAll(this, medicines)
         requestNotificationPermissionIfNeeded()
     }
 
+    private fun promptForExactAlarmPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        if (exactAlarmPromptShownThisSession) return
+
+        exactAlarmPromptShownThisSession = true
+        AlertDialog.Builder(this)
+            .setTitle(R.string.medicine_exact_alarm_permission_title)
+            .setMessage(R.string.medicine_exact_alarm_permission_message)
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.allow) { _, _ ->
+                val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+                exactAlarmSettingsLauncher.launch(intent)
+            }
+            .show()
+    }
+
     private fun requestNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
-        if (ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.POST_NOTIFICATIONS
-            ) == PackageManager.PERMISSION_GRANTED
-        ) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            requestFullScreenIntentPermissionIfNeeded()
+            return
+        }
+        if (hasNotificationPermission()) {
+            requestFullScreenIntentPermissionIfNeeded()
             return
         }
         if (AppStatePreferences.hasRequestedNotificationPermission(this)) return
 
         AppStatePreferences.setNotificationPermissionRequested(this, true)
         notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    private fun requestFullScreenIntentPermissionIfNeeded() {
+        if (canUseFullScreenIntent()) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return
+        if (fullScreenIntentPromptShownThisSession) return
+
+        fullScreenIntentPromptShownThisSession = true
+        AlertDialog.Builder(this)
+            .setTitle(R.string.medicine_full_screen_intent_permission_title)
+            .setMessage(R.string.medicine_full_screen_intent_permission_message)
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.allow) { _, _ ->
+                val intent = Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+                fullScreenIntentSettingsLauncher.launch(intent)
+            }
+            .show()
+    }
+
+    private fun hasNotificationPermission(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return true
+        }
+        return ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun canUseFullScreenIntent(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            return true
+        }
+        val notificationManager = getSystemService(NotificationManager::class.java) ?: return false
+        return notificationManager.canUseFullScreenIntent()
+    }
+
+    private fun handleAlarmFullScreenIntent(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_ALARM_FULL_SCREEN, false) != true) return
+        setShowWhenLocked(true)
+        setTurnScreenOn(true)
     }
 
     private fun showScheduleError(@StringRes messageRes: Int) {
@@ -577,11 +721,40 @@ class MedicinesActivity : AppCompatActivity() {
         return android.text.format.DateFormat.getTimeFormat(this).format(calendar.time)
     }
 
+    private fun formatScheduledWeekdays(scheduledWeekdays: List<Int>): String {
+        if (scheduledWeekdays.size == Medicine.ALL_SCHEDULED_WEEKDAYS.size) {
+            return getString(R.string.medicine_schedule_days_every_day)
+        }
+        return orderedWeekdays()
+            .filter { it in scheduledWeekdays }
+            .joinToString(", ") { weekdayDisplayName(it) }
+    }
+
+    private fun persistableScheduledWeekdays(): List<Int> {
+        return Medicine.ALL_SCHEDULED_WEEKDAYS.filter { it in selectedWeekdays }
+    }
+
+    private fun orderedWeekdays(): List<Int> {
+        val firstDayOfWeek = Calendar.getInstance().firstDayOfWeek
+        val zeroBasedFirstDay = firstDayOfWeek - Calendar.SUNDAY
+        return (0 until Medicine.ALL_SCHEDULED_WEEKDAYS.size).map { offset ->
+            ((zeroBasedFirstDay + offset) % Medicine.ALL_SCHEDULED_WEEKDAYS.size) + Calendar.SUNDAY
+        }
+    }
+
+    private fun weekdayDisplayName(dayOfWeek: Int): String {
+        return Calendar.getInstance().apply {
+            set(Calendar.DAY_OF_WEEK, dayOfWeek)
+        }.getDisplayName(Calendar.DAY_OF_WEEK, Calendar.SHORT, Locale.getDefault())
+            ?: dayOfWeek.toString()
+    }
+
     private fun showToast(@StringRes messageRes: Int) {
         Toast.makeText(this, messageRes, Toast.LENGTH_SHORT).show()
     }
 
     companion object {
         private const val MINUTES_PER_HOUR = 60
+        const val EXTRA_ALARM_FULL_SCREEN = "alarm_full_screen"
     }
 }

@@ -2,6 +2,7 @@ package org.archuser.milestones
 
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import java.util.Calendar
 
 class MedicineStatsTest {
     @Test
@@ -46,5 +47,39 @@ class MedicineStatsTest {
         )
 
         assertEquals(2, MedicineStats.currentStreak(medicine, today))
+    }
+
+    @Test
+    fun currentStreak_skipsDaysThatAreNotScheduled() {
+        val wednesday = LocalDay.of(2026, 4, 15)
+        val monday = LocalDay.of(2026, 4, 13)
+        val medicine = Medicine(
+            id = 1L,
+            name = "Vitamin D",
+            scheduledTimes = listOf(8 * 60),
+            scheduledWeekdays = listOf(Calendar.MONDAY, Calendar.WEDNESDAY, Calendar.FRIDAY),
+            doseLogs = listOf(
+                MedicineDoseLog(wednesday.key(), 0),
+                MedicineDoseLog(monday.key(), 0)
+            )
+        )
+
+        assertEquals(2, MedicineStats.currentStreak(medicine, wednesday))
+    }
+
+    @Test
+    fun todayDoseSummary_returnsZeroOnUnscheduledDays() {
+        val tuesday = LocalDay.of(2026, 4, 14)
+        val medicine = Medicine(
+            id = 1L,
+            name = "Vitamin D",
+            scheduledTimes = listOf(8 * 60),
+            scheduledWeekdays = listOf(Calendar.MONDAY, Calendar.WEDNESDAY, Calendar.FRIDAY)
+        )
+
+        assertEquals(
+            MedicineStats.DoseSummary(takenCount = 0, totalCount = 0),
+            MedicineStats.todayDoseSummary(medicine, tuesday)
+        )
     }
 }

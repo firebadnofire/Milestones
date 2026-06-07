@@ -9,7 +9,8 @@ import org.archuser.milestones.databinding.ItemMedicineDoseBinding
 class MedicineAdapter(
     private val onDoseChecked: (Medicine, Int, Boolean) -> Unit,
     private val onRemove: (Medicine) -> Unit,
-    private val formatScheduledTime: (Int) -> String
+    private val formatScheduledTime: (Int) -> String,
+    private val formatScheduledWeekdays: (List<Int>) -> String
 ) : RecyclerView.Adapter<MedicineAdapter.MedicineViewHolder>() {
 
     private val items = mutableListOf<Medicine>()
@@ -17,7 +18,13 @@ class MedicineAdapter(
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): MedicineViewHolder {
         val inflater = LayoutInflater.from(parent.context)
         val binding = ItemMedicineBinding.inflate(inflater, parent, false)
-        return MedicineViewHolder(binding, onDoseChecked, onRemove, formatScheduledTime)
+        return MedicineViewHolder(
+            binding,
+            onDoseChecked,
+            onRemove,
+            formatScheduledTime,
+            formatScheduledWeekdays
+        )
     }
 
     override fun onBindViewHolder(holder: MedicineViewHolder, position: Int) {
@@ -36,7 +43,8 @@ class MedicineAdapter(
         private val binding: ItemMedicineBinding,
         private val onDoseChecked: (Medicine, Int, Boolean) -> Unit,
         private val onRemove: (Medicine) -> Unit,
-        private val formatScheduledTime: (Int) -> String
+        private val formatScheduledTime: (Int) -> String,
+        private val formatScheduledWeekdays: (List<Int>) -> String
     ) : RecyclerView.ViewHolder(binding.root) {
 
         fun bind(medicine: Medicine) {
@@ -48,11 +56,19 @@ class MedicineAdapter(
                 R.string.medicine_current_streak,
                 MedicineStats.currentStreak(medicine, today)
             )
-            binding.medicineTodaySummary.text = binding.root.context.getString(
-                R.string.medicine_today_summary,
-                todaySummary.takenCount,
-                todaySummary.totalCount
+            binding.medicineScheduleDays.text = binding.root.context.getString(
+                R.string.medicine_schedule_days,
+                formatScheduledWeekdays(medicine.scheduledWeekdays)
             )
+            binding.medicineTodaySummary.text = if (todaySummary.totalCount == 0) {
+                binding.root.context.getString(R.string.medicine_today_not_scheduled)
+            } else {
+                binding.root.context.getString(
+                    R.string.medicine_today_summary,
+                    todaySummary.takenCount,
+                    todaySummary.totalCount
+                )
+            }
 
             bindDoseControls(medicine, today)
             binding.removeMedicineButton.setOnClickListener { onRemove(medicine) }
@@ -60,6 +76,9 @@ class MedicineAdapter(
 
         private fun bindDoseControls(medicine: Medicine, today: LocalDay) {
             binding.doseControlsContainer.removeAllViews()
+            if (!MedicineStats.isScheduledOnDay(medicine, today)) {
+                return
+            }
             val inflater = LayoutInflater.from(binding.root.context)
 
             medicine.scheduledTimes.forEachIndexed { doseIndex, scheduledTime ->

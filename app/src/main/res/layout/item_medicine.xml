@@ -32,6 +32,15 @@
             tools:text="Current streak: 4 days" />
 
         <TextView
+            android:id="@+id/medicine_schedule_days"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textAppearance="@style/TextAppearance.MaterialComponents.Body2"
+            android:textColor="?attr/colorOnSurfaceVariant"
+            tools:text="Days: Mon, Wed, Fri" />
+
+        <TextView
             android:id="@+id/medicine_today_summary"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

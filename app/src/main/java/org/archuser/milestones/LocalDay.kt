@@ -23,6 +23,14 @@ data class LocalDay private constructor(
         return calendar.timeInMillis
     }
 
+    fun dayOfWeek(): Int {
+        return Calendar.getInstance().apply {
+            clear()
+            set(year, month - 1, dayOfMonth, 0, 0, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.get(Calendar.DAY_OF_WEEK)
+    }
+
     fun daysUntil(other: LocalDay): Long = other.epochDay() - epochDay()
 
     fun plusDays(days: Int): LocalDay = fromEpochDay(epochDay() + days.toLong())

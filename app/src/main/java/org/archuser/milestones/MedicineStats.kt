@@ -15,18 +15,18 @@ object MedicineStats {
         medicine: Medicine,
         today: LocalDay = LocalDay.today()
     ): Int {
-        if (medicine.scheduledTimes.isEmpty()) return 0
+        if (medicine.scheduledTimes.isEmpty() || medicine.scheduledWeekdays.isEmpty()) return 0
 
-        var streakDay = if (isDayComplete(medicine, today)) {
+        var streakDay = if (isScheduledOnDay(medicine, today) && isDayComplete(medicine, today)) {
             today
         } else {
-            today.minusDays(1)
+            previousScheduledDay(medicine, today.minusDays(1))
         }
         var streak = 0
 
-        while (isDayComplete(medicine, streakDay)) {
+        while (streakDay != null && isDayComplete(medicine, streakDay)) {
             streak += 1
-            streakDay = streakDay.minusDays(1)
+            streakDay = previousScheduledDay(medicine, streakDay.minusDays(1))
         }
 
         return streak
@@ -75,6 +75,10 @@ object MedicineStats {
         medicine: Medicine,
         day: LocalDay
     ): DoseSummary {
+        if (!isScheduledOnDay(medicine, day)) {
+            return DoseSummary(takenCount = 0, totalCount = 0)
+        }
+
         val totalCount = medicine.scheduledTimes.size
         if (totalCount == 0) {
             return DoseSummary(takenCount = 0, totalCount = 0)
@@ -101,4 +105,27 @@ object MedicineStats {
         val summary = doseSummaryForDay(medicine, day)
         return summary.totalCount > 0 && summary.takenCount == summary.totalCount
     }
+
+    fun isScheduledOnDay(
+        medicine: Medicine,
+        day: LocalDay
+    ): Boolean {
+        return day.dayOfWeek() in medicine.scheduledWeekdays
+    }
+
+    private fun previousScheduledDay(
+        medicine: Medicine,
+        startDay: LocalDay
+    ): LocalDay? {
+        var candidate = startDay
+        repeat(DAYS_PER_WEEK) {
+            if (isScheduledOnDay(medicine, candidate)) {
+                return candidate
+            }
+            candidate = candidate.minusDays(1)
+        }
+        return null
+    }
+
+    private const val DAYS_PER_WEEK = 7
 }

@@ -1,43 +1,36 @@
 package org.archuser.milestones
 
-import android.Manifest
-import android.annotation.SuppressLint
 import android.app.AlarmManager
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.media.AudioAttributes
 import android.net.Uri
 import android.os.Build
 import android.util.Log
-import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
-import androidx.core.content.ContextCompat
 import java.util.Calendar
 
 object MedicineReminderScheduler {
     const val ACTION_DOSE_DUE = "org.archuser.milestones.action.MEDICINE_DOSE_DUE"
+    const val ACTION_TAKE_DOSE = "org.archuser.milestones.action.MEDICINE_TAKE_DOSE"
     const val EXTRA_MEDICINE_ID = "medicine_id"
     const val EXTRA_DOSE_INDEX = "dose_index"
     const val EXTRA_SCHEDULED_MINUTES = "scheduled_minutes"
     const val EXTRA_DUE_DAY = "due_day"
 
     private const val TAG = "MedicineReminders"
-    private const val DEFAULT_CHANNEL_ID = "medicine_reminders_default"
-    private const val CUSTOM_CHANNEL_ID_PREFIX = "medicine_reminders_custom_"
     private const val MINUTES_PER_HOUR = 60
     private const val MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR
-    private const val CONTENT_INTENT_REQUEST_CODE = 20_000
+    private const val DAYS_PER_WEEK = 7
 
     fun scheduleAll(
         context: Context,
         medicines: List<Medicine>,
         nowMillis: Long = System.currentTimeMillis()
     ) {
-        ensureNotificationChannels(context)
+        if (!canScheduleExactAlarms(context)) {
+            Log.w(TAG, "Skipping medicine reminder scheduling because exact alarm access is unavailable.")
+            return
+        }
         medicines.forEach { medicine ->
             scheduleMedicine(context, medicine, nowMillis)
         }
@@ -70,8 +63,16 @@ object MedicineReminderScheduler {
             Log.e(TAG, "Unable to schedule medicine reminder because AlarmManager is unavailable.")
             return
         }
+        if (!canScheduleExactAlarms(context, alarmManager)) {
+            Log.w(TAG, "Unable to schedule medicine reminder because exact alarm access is unavailable.")
+            return
+        }
 
-        val triggerAtMillis = nextTriggerAtMillis(scheduledMinutes, nowMillis)
+        val triggerAtMillis = nextTriggerAtMillis(
+            minutesAfterMidnight = scheduledMinutes,
+            scheduledWeekdays = medicine.scheduledWeekdays,
+            nowMillis = nowMillis
+        )
         val dueDay = LocalDay.fromTimestamp(triggerAtMillis).key()
         val pendingIntent = dosePendingIntent(
             context = context,
@@ -86,11 +87,22 @@ object MedicineReminderScheduler {
             return
         }
 
-        alarmManager.setAndAllowWhileIdle(
-            AlarmManager.RTC_WAKEUP,
-            triggerAtMillis,
-            pendingIntent
-        )
+        when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.M -> {
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    triggerAtMillis,
+                    pendingIntent
+                )
+            }
+            else -> {
+                alarmManager.setExact(
+                    AlarmManager.RTC_WAKEUP,
+                    triggerAtMillis,
+                    pendingIntent
+                )
+            }
+        }
     }
 
     fun cancelMedicine(context: Context, medicine: Medicine) {
@@ -105,112 +117,42 @@ object MedicineReminderScheduler {
         }
     }
 
-    fun showDoseDueNotification(
-        context: Context,
-        medicine: Medicine,
-        scheduledMinutes: Int
-    ) {
-        if (!canPostNotifications(context)) {
-            Log.i(TAG, "Medicine reminder notification skipped because notification permission is unavailable.")
-            return
-        }
-
-        val customSoundUri = resolveCustomNotificationSoundUri(context)
-        val channelId = ensureNotificationChannels(context, customSoundUri)
-        val scheduledTime = formatScheduledTime(context, scheduledMinutes)
-        val notificationBuilder = NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(R.drawable.ic_medicine_notification)
-            .setContentTitle(
-                context.getString(R.string.medicine_reminder_notification_title, medicine.name)
-            )
-            .setContentText(
-                context.getString(R.string.medicine_reminder_notification_text, scheduledTime)
-            )
-            .setCategory(NotificationCompat.CATEGORY_REMINDER)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-            .setAutoCancel(true)
-            .setContentIntent(openMedicinesPendingIntent(context))
-
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O && customSoundUri != null) {
-            notificationBuilder.setSound(customSoundUri)
-        }
-
-        val notification = notificationBuilder.build()
-
-        notify(context, reminderRequestCode(medicine.id, scheduledMinutes), notification)
-    }
-
-    internal fun nextTriggerAtMillis(minutesAfterMidnight: Int, nowMillis: Long): Long {
+    internal fun nextTriggerAtMillis(
+        minutesAfterMidnight: Int,
+        scheduledWeekdays: List<Int>,
+        nowMillis: Long
+    ): Long {
         require(minutesAfterMidnight in 0 until MINUTES_PER_DAY) {
             "Scheduled time must be between 0 and 1439 minutes."
+        }
+        require(scheduledWeekdays.isNotEmpty()) {
+            "Scheduled weekdays must not be empty."
         }
 
         val calendar = Calendar.getInstance().apply {
             timeInMillis = nowMillis
-            set(Calendar.HOUR_OF_DAY, minutesAfterMidnight / MINUTES_PER_HOUR)
-            set(Calendar.MINUTE, minutesAfterMidnight % MINUTES_PER_HOUR)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-            if (timeInMillis <= nowMillis) {
-                add(Calendar.DAY_OF_YEAR, 1)
+        }
+        repeat(DAYS_PER_WEEK + 1) { dayOffset ->
+            val candidate = (calendar.clone() as Calendar).apply {
+                if (dayOffset > 0) {
+                    add(Calendar.DAY_OF_YEAR, dayOffset)
+                }
+                set(Calendar.HOUR_OF_DAY, minutesAfterMidnight / MINUTES_PER_HOUR)
+                set(Calendar.MINUTE, minutesAfterMidnight % MINUTES_PER_HOUR)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+            if (
+                candidate.get(Calendar.DAY_OF_WEEK) in scheduledWeekdays &&
+                candidate.timeInMillis > nowMillis
+            ) {
+                return candidate.timeInMillis
             }
         }
-        return calendar.timeInMillis
+        error("Unable to find the next trigger time for the configured weekdays.")
     }
 
-    private fun canPostNotifications(context: Context): Boolean {
-        val notificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            return notificationsEnabled
-        }
-        return notificationsEnabled && ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.POST_NOTIFICATIONS
-        ) == PackageManager.PERMISSION_GRANTED
-    }
-
-    private fun ensureNotificationChannels(
-        context: Context,
-        customSoundUri: Uri? = resolveCustomNotificationSoundUri(context)
-    ): String {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            return DEFAULT_CHANNEL_ID
-        }
-
-        val notificationManager = context.getSystemService(NotificationManager::class.java)
-        if (notificationManager == null) {
-            Log.e(TAG, "Unable to create medicine reminder channel because NotificationManager is unavailable.")
-            return DEFAULT_CHANNEL_ID
-        }
-
-        val defaultChannel = NotificationChannel(
-            DEFAULT_CHANNEL_ID,
-            context.getString(R.string.medicine_reminder_channel_name),
-            NotificationManager.IMPORTANCE_DEFAULT
-        ).apply {
-            description = context.getString(R.string.medicine_reminder_channel_description)
-        }
-        notificationManager.createNotificationChannel(defaultChannel)
-
-        if (customSoundUri == null) {
-            return DEFAULT_CHANNEL_ID
-        }
-
-        val customChannelId = customChannelId(customSoundUri)
-        val customChannel = NotificationChannel(
-            customChannelId,
-            context.getString(R.string.medicine_reminder_channel_name),
-            NotificationManager.IMPORTANCE_DEFAULT
-        ).apply {
-            description = context.getString(R.string.medicine_reminder_channel_description)
-            setSound(customSoundUri, notificationAudioAttributes())
-        }
-        notificationManager.createNotificationChannel(customChannel)
-        return customChannelId
-    }
-
-    private fun resolveCustomNotificationSoundUri(context: Context): Uri? {
+    fun resolveCustomReminderSoundUri(context: Context): Uri? {
         if (!AppStatePreferences.isCustomNotificationSoundEnabled(context)) {
             return null
         }
@@ -222,28 +164,17 @@ object MedicineReminderScheduler {
         return runCatching {
             val mimeType = context.contentResolver.getType(storedUri)
             require(mimeType?.startsWith("audio/") == true) {
-                "Stored custom notification sound is not audio."
+                "Stored custom reminder sound is not audio."
             }
             context.contentResolver.openAssetFileDescriptor(storedUri, "r")?.use { asset ->
                 require(asset.length != 0L) {
-                    "Stored custom notification sound is empty."
+                    "Stored custom reminder sound is empty."
                 }
-            } ?: error("Unable to open stored custom notification sound.")
+            } ?: error("Unable to open stored custom reminder sound.")
             storedUri
         }.onFailure { error ->
-            Log.e(TAG, "Falling back to the system notification sound because the custom sound is unavailable.", error)
+            Log.e(TAG, "Falling back to the system alarm sound because the custom sound is unavailable.", error)
         }.getOrNull()
-    }
-
-    private fun customChannelId(soundUri: Uri): String {
-        return CUSTOM_CHANNEL_ID_PREFIX + soundUri.toString().hashCode().toUInt().toString(16)
-    }
-
-    private fun notificationAudioAttributes(): AudioAttributes {
-        return AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_NOTIFICATION)
-            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-            .build()
     }
 
     private fun dosePendingIntent(
@@ -289,19 +220,7 @@ object MedicineReminderScheduler {
         pendingIntent.cancel()
     }
 
-    private fun openMedicinesPendingIntent(context: Context): PendingIntent {
-        val intent = Intent(context, MedicinesActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        return PendingIntent.getActivity(
-            context,
-            CONTENT_INTENT_REQUEST_CODE,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-    }
-
-    private fun formatScheduledTime(context: Context, minutesAfterMidnight: Int): String {
+    fun formatScheduledTime(context: Context, minutesAfterMidnight: Int): String {
         val calendar = Calendar.getInstance().apply {
             clear()
             set(Calendar.HOUR_OF_DAY, minutesAfterMidnight / MINUTES_PER_HOUR)
@@ -310,17 +229,21 @@ object MedicineReminderScheduler {
         return android.text.format.DateFormat.getTimeFormat(context).format(calendar.time)
     }
 
+    fun canScheduleExactAlarms(context: Context): Boolean {
+        val alarmManager = context.getSystemService(AlarmManager::class.java) ?: return false
+        return canScheduleExactAlarms(context, alarmManager)
+    }
+
+    private fun canScheduleExactAlarms(context: Context, alarmManager: AlarmManager): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            alarmManager.canScheduleExactAlarms()
+        } else {
+            true
+        }
+    }
+
     private fun reminderRequestCode(medicineId: Long, doseIndex: Int): Int {
         val medicineHash = (medicineId xor (medicineId ushr 32)).toInt()
         return (31 * medicineHash + doseIndex) and Int.MAX_VALUE
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun notify(context: Context, notificationId: Int, notification: android.app.Notification) {
-        runCatching {
-            NotificationManagerCompat.from(context).notify(notificationId, notification)
-        }.onFailure { error ->
-            Log.e(TAG, "Unable to show medicine reminder notification.", error)
-        }
     }
 }

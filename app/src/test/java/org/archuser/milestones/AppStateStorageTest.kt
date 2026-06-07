@@ -2,6 +2,7 @@ package org.archuser.milestones
 
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import java.util.Calendar
 
 class AppStateStorageTest {
     @Test
@@ -26,6 +27,44 @@ class AppStateStorageTest {
                 medicines = emptyList()
             ),
             decoded
+        )
+    }
+
+    @Test
+    fun decode_medicineWithoutWeekdays_defaultsToAllDays() {
+        val decoded = AppStateStorage.decode(
+            """{
+                "version": 1,
+                "milestones": [],
+                "medicines": [
+                    {
+                        "id": 7,
+                        "name": "Vitamin D",
+                        "scheduledTimes": [480],
+                        "doseLogs": []
+                    }
+                ]
+            }"""
+        )
+
+        assertEquals(
+            listOf(
+                Medicine(
+                    id = 7L,
+                    name = "Vitamin D",
+                    scheduledTimes = listOf(480),
+                    scheduledWeekdays = listOf(
+                        Calendar.SUNDAY,
+                        Calendar.MONDAY,
+                        Calendar.TUESDAY,
+                        Calendar.WEDNESDAY,
+                        Calendar.THURSDAY,
+                        Calendar.FRIDAY,
+                        Calendar.SATURDAY
+                    )
+                )
+            ),
+            decoded.medicines
         )
     }
 }

@@ -9,6 +9,7 @@ class MedicineReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
             MedicineReminderScheduler.ACTION_DOSE_DUE -> handleDoseDue(context, intent)
+            MedicineReminderScheduler.ACTION_TAKE_DOSE -> handleTakeDose(context, intent)
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_MY_PACKAGE_REPLACED,
             Intent.ACTION_TIME_CHANGED,
@@ -57,13 +58,54 @@ class MedicineReminderReceiver : BroadcastReceiver() {
         }
 
         if (!MedicineStats.isDoseTaken(medicine, dueDay, doseIndex)) {
-            MedicineReminderScheduler.showDoseDueNotification(
+            MedicineAlarmService.start(
                 context = context,
-                medicine = medicine,
+                medicineId = medicine.id,
+                doseIndex = doseIndex,
+                dueDay = dueDay.key(),
+                medicineName = medicine.name,
                 scheduledMinutes = scheduledMinutes
             )
         }
         MedicineReminderScheduler.scheduleDose(context, medicine, doseIndex)
+    }
+
+    private fun handleTakeDose(context: Context, intent: Intent) {
+        val medicineId = intent.getLongExtra(MedicineReminderScheduler.EXTRA_MEDICINE_ID, MISSING_ID)
+        val doseIndex = intent.getIntExtra(MedicineReminderScheduler.EXTRA_DOSE_INDEX, MISSING_INDEX)
+        val dueDay = intent.getStringExtra(MedicineReminderScheduler.EXTRA_DUE_DAY)
+            ?.let { dueDayKey ->
+                runCatching { LocalDay.parse(dueDayKey) }
+                    .onFailure { error ->
+                        Log.w(TAG, "Take-dose action has an invalid due day: $dueDayKey", error)
+                    }
+                    .getOrNull()
+            }
+
+        if (medicineId == MISSING_ID || doseIndex == MISSING_INDEX || dueDay == null) {
+            Log.w(TAG, "Take-dose action is missing required extras.")
+            return
+        }
+
+        val appState = loadAppState(context) ?: return
+        val updatedMedicines = appState.medicines.map { medicine ->
+            if (medicine.id != medicineId) {
+                medicine
+            } else {
+                MedicineStats.toggleDoseTaken(
+                    medicine = medicine,
+                    day = dueDay,
+                    scheduledDoseIndex = doseIndex,
+                    isTaken = true
+                )
+            }
+        }
+
+        AppStatePreferences.save(
+            context,
+            appState.copy(medicines = updatedMedicines)
+        )
+        MedicineAlarmService.stop(context)
     }
 
     private fun rescheduleAll(context: Context) {

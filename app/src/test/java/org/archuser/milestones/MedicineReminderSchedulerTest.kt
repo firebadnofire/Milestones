@@ -13,7 +13,11 @@ class MedicineReminderSchedulerTest {
 
         assertEquals(
             expected,
-            MedicineReminderScheduler.nextTriggerAtMillis(8 * 60, now)
+            MedicineReminderScheduler.nextTriggerAtMillis(
+                8 * 60,
+                Medicine.ALL_SCHEDULED_WEEKDAYS,
+                now
+            )
         )
     }
 
@@ -24,7 +28,11 @@ class MedicineReminderSchedulerTest {
 
         assertEquals(
             expected,
-            MedicineReminderScheduler.nextTriggerAtMillis(8 * 60, now)
+            MedicineReminderScheduler.nextTriggerAtMillis(
+                8 * 60,
+                Medicine.ALL_SCHEDULED_WEEKDAYS,
+                now
+            )
         )
     }
 
@@ -35,7 +43,26 @@ class MedicineReminderSchedulerTest {
 
         assertEquals(
             expected,
-            MedicineReminderScheduler.nextTriggerAtMillis(8 * 60, now)
+            MedicineReminderScheduler.nextTriggerAtMillis(
+                8 * 60,
+                Medicine.ALL_SCHEDULED_WEEKDAYS,
+                now
+            )
+        )
+    }
+
+    @Test
+    fun nextTriggerAtMillis_skipsDaysOutsideTheScheduledWeekdays() = withUtcTimeZone {
+        val now = utcMillis(2026, Calendar.APRIL, 15, 8, 30)
+        val expected = utcMillis(2026, Calendar.APRIL, 17, 8, 0)
+
+        assertEquals(
+            expected,
+            MedicineReminderScheduler.nextTriggerAtMillis(
+                8 * 60,
+                listOf(Calendar.MONDAY, Calendar.WEDNESDAY, Calendar.FRIDAY),
+                now
+            )
         )
     }
 

@@ -14,6 +14,7 @@ object MedicineStorage {
                     .put("id", medicine.id)
                     .put("name", medicine.name)
                     .put("scheduledTimes", JSONArray(medicine.scheduledTimes))
+                    .put("scheduledWeekdays", JSONArray(medicine.scheduledWeekdays))
                     .put("doseLogs", encodeDoseLogs(medicine.doseLogs))
             )
         }
@@ -39,12 +40,14 @@ object MedicineStorage {
         }
 
         val scheduledTimes = decodeScheduledTimes(item.optJSONArray("scheduledTimes"))
+        val scheduledWeekdays = decodeScheduledWeekdays(item.optJSONArray("scheduledWeekdays"))
         val doseLogs = decodeDoseLogs(item.optJSONArray("doseLogs"), scheduledTimes.size)
 
         return Medicine(
             id = requireLong(item, "id"),
             name = name,
             scheduledTimes = scheduledTimes,
+            scheduledWeekdays = scheduledWeekdays,
             doseLogs = doseLogs
         )
     }
@@ -69,6 +72,31 @@ object MedicineStorage {
         }
 
         return scheduledTimes
+    }
+
+    private fun decodeScheduledWeekdays(array: JSONArray?): List<Int> {
+        if (array == null) {
+            return Medicine.ALL_SCHEDULED_WEEKDAYS
+        }
+
+        val scheduledWeekdays = buildList {
+            for (index in 0 until array.length()) {
+                val dayOfWeek = array.getInt(index)
+                require(dayOfWeek in Medicine.ALL_SCHEDULED_WEEKDAYS) {
+                    "Scheduled weekdays must be valid Calendar day-of-week values."
+                }
+                add(dayOfWeek)
+            }
+        }
+
+        require(scheduledWeekdays.isNotEmpty()) {
+            "Medicines must include at least one scheduled weekday."
+        }
+        require(scheduledWeekdays.distinct().size == scheduledWeekdays.size) {
+            "Scheduled weekdays must be unique."
+        }
+
+        return Medicine.ALL_SCHEDULED_WEEKDAYS.filter { it in scheduledWeekdays }
     }
 
     private fun encodeDoseLogs(doseLogs: List<MedicineDoseLog>): JSONArray {
