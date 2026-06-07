@@ -3,7 +3,7 @@
 Milestones is an Android app for tracking both long-running milestones and recurring medicine doses in one local-first app.
 
 <p>
-  <a href="obtainium://add/https://github.com/firebadnofire/Milestones/releases">
+  <a href="https://archuser.org/milestones.apk">
     <img src="readme-assets/badge_obtainium.png" alt="Get it on Obtainium" width="188" height="56" valign="middle">
   </a>
   <a href="https://github.com/firebadnofire/Milestones/releases">
